@@ -6,7 +6,12 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Chapter, Course, Page
+import logging
+import secrets
+
+from .models import Chapter, Course, Invite, Page, User
+
+_log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -738,3 +743,59 @@ async def seed_database(session: AsyncSession) -> None:
         session.add(page)
 
     await session.commit()
+
+    # Seed admin user + a first learner invite (dev only)
+    await _seed_admin_and_invite(session)
+
+
+async def _seed_admin_and_invite(session: AsyncSession) -> None:
+    """
+    Create a dev admin user and a bootstrap learner invite.
+    Only runs if no admin exists yet.
+    Logs the invite token so a developer can sign up their first learner.
+    """
+    from sqlalchemy import select
+    from datetime import datetime, timedelta, timezone
+    import hashlib
+
+    result = await session.execute(
+        select(User).where(User.role == "admin")
+    )
+    if result.scalar_one_or_none():
+        return  # already seeded
+
+    from app.auth.service import hash_password
+
+    # Create dev admin
+    admin = User(
+        email="admin@bookey.dev",
+        display_name="Bookey Admin",
+        role="admin",
+        password_hash=hash_password("bookey-admin-dev"),
+    )
+    session.add(admin)
+    await session.flush()
+
+    # Create a bootstrap learner invite
+    raw_invite = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_invite.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=365)
+    invite = Invite(
+        token_hash=token_hash,
+        invited_email=None,
+        role="learner",
+        created_by=admin.id,
+        expires_at=expires_at,
+    )
+    session.add(invite)
+    await session.commit()
+
+    _log.warning(
+        "\n"
+        "=== DEV BOOTSTRAP ===\n"
+        "Admin user:  admin@bookey.dev  /  bookey-admin-dev\n"
+        "Learner invite token: %s\n"
+        "(Use this at POST /auth/signup to create the first learner account)\n"
+        "=====================",
+        raw_invite,
+    )

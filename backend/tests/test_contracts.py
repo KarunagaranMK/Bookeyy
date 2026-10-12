@@ -4,6 +4,8 @@ tests/test_contracts.py
 1. Round-trip test: every server event example can be serialized and parsed back.
 2. Parity test: Pydantic event type names and payload keys match the TypeScript contract.
 3. Validation test: the client frame validator correctly rejects bad frames.
+
+B1: Protocol version bumped to v2. auth_ok, auth_error, auth_ticket added.
 """
 from __future__ import annotations
 
@@ -65,23 +67,23 @@ _NOW = int(time.time() * 1000)
 
 SERVER_EXAMPLES: dict[str, dict] = {
     "session_started": {
-        "v": 1, "type": "session_started", "seq": 1, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "session_started", "seq": 1, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"sessionId": "sess_1", "courseId": "python", "pageId": "lesson_python_1_1"},
     },
     "text_chunk": {
-        "v": 1, "type": "text_chunk", "seq": 2, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "text_chunk", "seq": 2, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"segmentId": "lesson_python_1_1#s0", "text": "Vanakkam!", "wordStart": 0, "wordEnd": 1, "audioStartMs": 0},
     },
     "audio_chunk": {
-        "v": 1, "type": "audio_chunk", "seq": 3, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "audio_chunk", "seq": 3, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"segmentId": "lesson_python_1_1#s0", "mime": "audio/mpeg", "base64": "AAAA", "seq": 0, "final": False},
     },
     "cue": {
-        "v": 1, "type": "cue", "seq": 4, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "cue", "seq": 4, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"segmentId": "lesson_python_1_1#s5", "atWord": 5, "action": "highlight", "targetId": "variable"},
     },
     "diagram_spec": {
-        "v": 1, "type": "diagram_spec", "seq": 5, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "diagram_spec", "seq": 5, "sessionId": "sess_1", "ts": _NOW,
         "payload": {
             "diagramId": "lesson_python_1_1",
             "spec": {
@@ -93,19 +95,19 @@ SERVER_EXAMPLES: dict[str, dict] = {
         },
     },
     "diagram_draw": {
-        "v": 1, "type": "diagram_draw", "seq": 6, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "diagram_draw", "seq": 6, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"diagramId": "lesson_python_1_1", "stepId": "x"},
     },
     "highlight": {
-        "v": 1, "type": "highlight", "seq": 7, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "highlight", "seq": 7, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"targetId": "variable", "style": "marker"},
     },
     "code_stream": {
-        "v": 1, "type": "code_stream", "seq": 8, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "code_stream", "seq": 8, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"codeId": "run_1", "chunk": "x = 10\n", "final": False},
     },
     "run_result": {
-        "v": 1, "type": "run_result", "seq": 9, "sessionId": None, "ts": _NOW,
+        "v": 2, "type": "run_result", "seq": 9, "sessionId": None, "ts": _NOW,
         "payload": {
             "codeId": "run_1",
             "stdout": "10\n<class 'int'>\n",
@@ -124,43 +126,43 @@ SERVER_EXAMPLES: dict[str, dict] = {
         },
     },
     "question_received": {
-        "v": 1, "type": "question_received", "seq": 10, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "question_received", "seq": 10, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"questionId": "q_1", "source": "text", "text": "What is a variable?"},
     },
     "answer_chunk": {
-        "v": 1, "type": "answer_chunk", "seq": 11, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "answer_chunk", "seq": 11, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"questionId": "q_1", "text": "A variable is a labeled box.", "final": True, "attachments": None},
     },
     "scope_refused": {
-        "v": 1, "type": "scope_refused", "seq": 12, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "scope_refused", "seq": 12, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"questionId": "q_2", "message": "I can only help with this course."},
     },
     "sources": {
-        "v": 1, "type": "sources", "seq": 13, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "sources", "seq": 13, "sessionId": "sess_1", "ts": _NOW,
         "payload": {
             "questionId": "q_1",
             "items": [{"title": "Current page", "kind": "page", "ref": "0"}],
         },
     },
     "page_complete": {
-        "v": 1, "type": "page_complete", "seq": 14, "sessionId": "sess_1", "ts": _NOW,
+        "v": 2, "type": "page_complete", "seq": 14, "sessionId": "sess_1", "ts": _NOW,
         "payload": {"pageId": "lesson_python_1_1"},
     },
     "error": {
-        "v": 1, "type": "error", "seq": 15, "sessionId": None, "ts": _NOW,
+        "v": 2, "type": "error", "seq": 15, "sessionId": None, "ts": _NOW,
         "payload": {"code": "page_not_found", "message": "No page found.", "recoverable": True},
     },
 }
 
-# One example per client event type
+# One example per client event type (v2)
 CLIENT_EXAMPLES: dict[str, str] = {
-    "start_page": json.dumps({"v": 1, "type": "start_page", "payload": {"courseId": "python", "pageId": "lesson_python_1_1"}}),
-    "pause": json.dumps({"v": 1, "type": "pause", "payload": {"sessionId": "sess_1"}}),
-    "resume": json.dumps({"v": 1, "type": "resume", "payload": {"sessionId": "sess_1"}}),
-    "seek": json.dumps({"v": 1, "type": "seek", "payload": {"sessionId": "sess_1", "segmentId": "p1#s10", "wordIndex": 10}}),
-    "speed": json.dumps({"v": 1, "type": "speed", "payload": {"sessionId": "sess_1", "value": 1.5}}),
+    "start_page": json.dumps({"v": 2, "type": "start_page", "payload": {"courseId": "python", "pageId": "lesson_python_1_1"}}),
+    "pause": json.dumps({"v": 2, "type": "pause", "payload": {"sessionId": "sess_1"}}),
+    "resume": json.dumps({"v": 2, "type": "resume", "payload": {"sessionId": "sess_1"}}),
+    "seek": json.dumps({"v": 2, "type": "seek", "payload": {"sessionId": "sess_1", "segmentId": "p1#s10", "wordIndex": 10}}),
+    "speed": json.dumps({"v": 2, "type": "speed", "payload": {"sessionId": "sess_1", "value": 1.5}}),
     "ask_question": json.dumps({
-        "v": 1, "type": "ask_question",
+        "v": 2, "type": "ask_question",
         "payload": {
             "sessionId": "sess_1", "source": "text", "text": "What is a variable?",
             "questionId": "q_1",
@@ -168,7 +170,7 @@ CLIENT_EXAMPLES: dict[str, str] = {
         },
     }),
     "run_code": json.dumps({
-        "v": 1, "type": "run_code",
+        "v": 2, "type": "run_code",
         "payload": {
             "courseId": "python", "pageId": "lesson_python_1_1",
             "code": "x = 10\nprint(x)", "language": "python",
@@ -176,11 +178,11 @@ CLIENT_EXAMPLES: dict[str, str] = {
         },
     }),
     "submit_survey": json.dumps({
-        "v": 1, "type": "submit_survey",
+        "v": 2, "type": "submit_survey",
         "payload": {"courseId": "python", "answers": {"q1": "cricket", "q2": "visual"}},
     }),
     "audio_in": json.dumps({
-        "v": 1, "type": "audio_in",
+        "v": 2, "type": "audio_in",
         "payload": {"sessionId": "sess_1", "seq": 0, "mime": "audio/webm;codecs=opus", "base64": "AAAA", "final": False},
     }),
 }
@@ -211,18 +213,23 @@ def test_client_event_round_trip(event_type: str, raw: str) -> None:
 # Parity tests — TypeScript vs Pydantic
 # ---------------------------------------------------------------------------
 
-# These are the exact names from book-events.ts SERVER_EVENT_TYPES constant
+# These are the exact names from book-events.ts SERVER_EVENT_TYPES constant (v2)
 TS_SERVER_EVENT_TYPES = frozenset([
     "session_started", "text_chunk", "audio_chunk", "cue", "diagram_spec",
     "diagram_draw", "highlight", "code_stream", "run_result",
     "question_received", "answer_chunk", "scope_refused", "sources",
     "page_complete", "error",
+    # B1 connection-level
+    "auth_ok", "auth_error",
 ])
 
-# Client event types from book-events.ts ClientEventPayloads interface
+# Client event types from book-events.ts ClientEventPayloads interface (v2)
+# audio_in is in the TS contract (lib/contracts/book-events.ts line 183-193)
+# auth_ticket is a connection-level frame (handled separately, not in ClientEventPayloads)
 TS_CLIENT_EVENT_TYPES = frozenset([
     "start_page", "pause", "resume", "seek", "speed",
     "ask_question", "run_code", "submit_survey", "audio_in",
+    "auth_ticket",
 ])
 
 # Payload keys per server event from book-events.ts
@@ -301,10 +308,11 @@ def test_client_payload_keys_parity(event_type: str, ts_keys: frozenset[str]) ->
 
 @pytest.mark.parametrize("raw,expected_error_fragment", [
     ("not json", "not valid JSON"),
-    (json.dumps({"v": 2, "type": "start_page", "payload": {}}), "unsupported protocol version"),
-    (json.dumps({"v": 1, "type": "unknown_type", "payload": {}}), ""),  # Pydantic discriminator error
-    (json.dumps({"v": 1, "type": "start_page", "payload": {"courseId": "python"}}), ""),  # missing pageId
-    (json.dumps({"v": 1, "type": "speed", "payload": {"sessionId": "s1", "value": -1}}), ""),  # negative speed
+    # v:1 is now rejected (protocol bumped to v2)
+    (json.dumps({"v": 1, "type": "start_page", "payload": {}}), "unsupported protocol version"),
+    (json.dumps({"v": 2, "type": "unknown_type", "payload": {}}), ""),  # Pydantic discriminator error
+    (json.dumps({"v": 2, "type": "start_page", "payload": {"courseId": "python"}}), ""),  # missing pageId
+    (json.dumps({"v": 2, "type": "speed", "payload": {"sessionId": "s1", "value": -1}}), ""),  # negative speed
 ])
 def test_invalid_frames_rejected(raw: str, expected_error_fragment: str) -> None:
     with pytest.raises(ParseError) as exc_info:

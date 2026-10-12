@@ -6,3 +6,4 @@ export const metadata: Metadata = { title: 'Tutor settings' }
 export default function AdminTutorSettingsPage() {
   return <TutorSettingsForm />
 }
+  

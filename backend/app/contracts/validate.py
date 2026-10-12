@@ -4,6 +4,10 @@ app/contracts/validate.py
 Runtime validation of inbound client frames, mirroring the TypeScript
 validate.ts logic. Rejects invalid frames and returns a typed error instead
 of crashing the connection.
+
+B1 changes:
+- Accepts protocol version 2 (v2) frames
+- Recognises auth_ticket as a connection-level frame (like ping)
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from .models import (
     BOOK_PROTOCOL_VERSION,
+    AuthTicketEvent,
     BookClientEvent,
     PingEvent,
 )
@@ -29,11 +34,13 @@ class ParseError(Exception):
         self.message = message
 
 
-def parse_client_event(raw: Union[str, bytes]) -> Union[BookClientEvent, PingEvent]:
+def parse_client_event(
+    raw: Union[str, bytes],
+) -> Union[BookClientEvent, PingEvent, AuthTicketEvent]:
     """
     Parse and validate an inbound client frame.
 
-    Returns a typed BookClientEvent (or PingEvent for connection-level pings).
+    Returns a typed BookClientEvent, PingEvent, or AuthTicketEvent.
     Raises ParseError for any validation failure — the gateway turns this into
     an `error` server event and never crashes the connection.
     """
@@ -51,6 +58,15 @@ def parse_client_event(raw: Union[str, bytes]) -> Union[BookClientEvent, PingEve
     # Connection-level ping — handled before protocol validation
     if data.get("type") == "ping":
         return PingEvent.model_validate(data)
+
+    # B1: auth_ticket is a connection-level frame, not versioned
+    if data.get("type") == "auth_ticket":
+        try:
+            return AuthTicketEvent.model_validate(data)
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            msg = first.get("msg", str(exc))
+            raise ParseError(f"auth_ticket: {msg}")
 
     v = data.get("v")
     if v != BOOK_PROTOCOL_VERSION:

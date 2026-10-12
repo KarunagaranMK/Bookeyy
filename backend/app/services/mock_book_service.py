@@ -276,12 +276,14 @@ class MockBookService:
     def __init__(
         self,
         send: SendFn,
+        user_id: str = "",
         token_ms: int = 85,
         thinking_ms: int = 600,
         answer_token_ms: int = 45,
         code_stream_ms: int = 30,
     ) -> None:
         self._send = send
+        self._user_id = user_id
         self._token_ms = token_ms
         self._thinking_ms = thinking_ms
         self._answer_token_ms = answer_token_ms
@@ -290,6 +292,14 @@ class MockBookService:
         self._seq: int = 0
         self._narration: Optional[_NarrationState] = None
         self._survey_answers: dict[str, dict[str, str]] = {}
+        # Tutor: per-connection conversation history
+        self._tutor_history: list[dict] = []
+        self._tutor_course_id: str = "python"
+        self._tutor_chapter: int = 1
+        self._tutor_page: int = 1
+        self._narration_active: bool = False
+        # Audio: per-utterance buffer (seq → bytes)
+        self._audio_buffers: dict[str, bytes] = {}
 
     # -----------------------------------------------------------------------
     # Internal helpers
@@ -536,58 +546,142 @@ class MockBookService:
             session_id=session_id,
         )
 
-        # Check scope
-        if not _is_python_question(text):
-            await asyncio.sleep(self._thinking_ms / 1000.0)
-            await self._emit(
-                ScopeRefusedEvent(
-                    seq=0, ts=0, sessionId=session_id,
-                    payload=ScopeRefusedPayload(questionId=question_id, message=_SCOPE_REFUSE_MSG),
-                ),
-                session_id=session_id,
-            )
-            return
+        # Update page context from the question's context payload
+        course_id = context.get("courseId") or self._tutor_course_id
+        chapter = context.get("chapter") or self._tutor_chapter
+        page = context.get("page") or self._tutor_page
+        page_script = context.get("pageScript") or ""
+        learner_profile = context.get("learnerProfile") or {}
 
-        # Stream scripted answer
-        await asyncio.sleep(self._thinking_ms / 1000.0)
-        chunks = _pick_answer_chunks(text)
-        for idx, chunk in enumerate(chunks):
-            is_final = idx == len(chunks) - 1
+        # Run B4 tutor pipeline
+        import asyncio
+        try:
+            from app.tutor.graph import (
+                process_question,
+                ANSWER_START, ANSWER_CHUNK, ANSWER_END, SOURCES_EVENT, SCOPE_REFUSED,
+            )
+
+            gen = await process_question(
+                question=text,
+                user_id=self._user_id or "anonymous",
+                session_id=session_id or "default",
+                course_id=course_id,
+                chapter=chapter,
+                page=page,
+                history=self._tutor_history[-6:],  # last 3 exchanges (6 messages)
+                page_script=page_script,
+                learner_profile=learner_profile,
+            )
+
+            full_answer_parts: list[str] = []
+            sources_payload: list[dict] = []
+
+            async for ev in gen:
+                etype = ev.get("type", "")
+
+                if etype == SCOPE_REFUSED:
+                    await self._emit(
+                        ScopeRefusedEvent(
+                            seq=0, ts=0, sessionId=session_id,
+                            payload=ScopeRefusedPayload(
+                                questionId=question_id,
+                                message=ev.get("message", "Out of scope."),
+                            ),
+                        ),
+                        session_id=session_id,
+                    )
+                    return
+
+                elif etype == ANSWER_CHUNK:
+                    word = ev.get("word", "")
+                    full_answer_parts.append(word)
+                    await self._emit(
+                        AnswerChunkEvent(
+                            seq=0, ts=0, sessionId=session_id,
+                            payload=AnswerChunkPayload(
+                                questionId=question_id,
+                                text=word + " ",
+                                final=False,
+                                attachments=None,
+                            ),
+                        ),
+                        session_id=session_id,
+                    )
+
+                elif etype == ANSWER_END:
+                    # Send final empty chunk as end-of-answer marker
+                    await self._emit(
+                        AnswerChunkEvent(
+                            seq=0, ts=0, sessionId=session_id,
+                            payload=AnswerChunkPayload(
+                                questionId=question_id,
+                                text="",
+                                final=True,
+                                attachments=None,
+                            ),
+                        ),
+                        session_id=session_id,
+                    )
+
+                elif etype == SOURCES_EVENT:
+                    sources_payload = ev.get("sources", [])
+
+            # Emit sources (always, even if empty — protocol requires the event)
+            _source_items = [
+                SourceItem(
+                    title=s.get("chunkId", "")[:40] or "Reference",
+                    kind="doc",
+                    ref=s.get("documentId", ""),
+                )
+                for s in sources_payload[:5]
+            ] or [SourceItem(title="Python Basics", kind="page", ref="0")]
             await self._emit(
-                AnswerChunkEvent(
+                SourcesEvent(
                     seq=0, ts=0, sessionId=session_id,
-                    payload=AnswerChunkPayload(
-                        questionId=question_id, text=chunk, final=is_final,
-                        attachments=None,
+                    payload=SourcesPayload(
+                        questionId=question_id,
+                        items=_source_items,
                     ),
                 ),
                 session_id=session_id,
             )
-            if not is_final:
-                await asyncio.sleep(self._answer_token_ms / 1000.0)
 
-        # Sources
-        page_id = context.get("pageId", "lesson_python_1_1")
-        page_index = 0
-        from app.db.seed import PYTHON_PAGES
-        for pi, p in enumerate(PYTHON_PAGES):
-            if p["id"] == page_id:
-                page_index = pi
-                break
+            # Update conversation history
+            full_answer = " ".join(full_answer_parts)
+            self._tutor_history.append({"role": "user", "content": text})
+            self._tutor_history.append({"role": "assistant", "content": full_answer})
+            if len(self._tutor_history) > 20:
+                self._tutor_history = self._tutor_history[-20:]
 
-        await self._emit(
-            SourcesEvent(
-                seq=0, ts=0, sessionId=session_id,
-                payload=SourcesPayload(
-                    questionId=question_id,
-                    items=[
-                        SourceItem(title="Current page", kind="page", ref=str(page_index)),
-                        SourceItem(title="Chapter 1 — Variables", kind="page", ref="0"),
-                    ],
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("Tutor pipeline error: %s", exc, exc_info=True)
+            # Fallback to scripted answers so UI is never blank
+            chunks = _pick_answer_chunks(text)
+            for idx, chunk in enumerate(chunks):
+                is_final = idx == len(chunks) - 1
+                await self._emit(
+                    AnswerChunkEvent(
+                        seq=0, ts=0, sessionId=session_id,
+                        payload=AnswerChunkPayload(
+                            questionId=question_id, text=chunk, final=is_final,
+                            attachments=None,
+                        ),
+                    ),
+                    session_id=session_id,
+                )
+
+            # Always emit sources so clients receive the expected protocol event
+            await self._emit(
+                SourcesEvent(
+                    seq=0, ts=0, sessionId=session_id,
+                    payload=SourcesPayload(
+                        questionId=question_id,
+                        items=[SourceItem(title="Python Basics", kind="page", ref="0")],
+                    ),
                 ),
-            ),
-            session_id=session_id,
-        )
+                session_id=session_id,
+            )
 
     # -----------------------------------------------------------------------
     # Code runner
@@ -669,8 +763,51 @@ class MockBookService:
     # Audio in (no-op in B0)
     # -----------------------------------------------------------------------
 
-    async def handle_audio_in(self, **kwargs) -> None:
-        pass  # STT not connected in B0
+    async def handle_audio_in(
+        self,
+        session_id: Optional[str] = None,
+        seq: int = 0,
+        mime: str = "audio/webm",
+        base64: str = "",
+        final: bool = False,
+        **kwargs,
+    ) -> None:
+        """B5: STT pipeline. Assembles chunks, transcribes on final=True."""
+        import base64 as b64
+        buf_key = session_id or "default"
+
+        # Accumulate audio chunks
+        try:
+            chunk_bytes = b64.b64decode(base64) if base64 else b""
+        except Exception:
+            chunk_bytes = b""
+
+        self._audio_buffers[buf_key] = self._audio_buffers.get(buf_key, b"") + chunk_bytes
+
+        if not final:
+            return  # wait for more chunks
+
+        audio_bytes = self._audio_buffers.pop(buf_key, b"")
+        if not audio_bytes:
+            return
+
+        # Run B5 STT + feed to tutor
+        try:
+            from app.voice.pipeline import handle_audio_in as stt_handle
+            await stt_handle(
+                session_id=buf_key,
+                audio_bytes=audio_bytes,
+                mime=mime,
+                user_id=self._user_id or "anonymous",
+                course_id=self._tutor_course_id,
+                chapter=self._tutor_chapter,
+                page=self._tutor_page,
+                ws_send=self._send,
+                narration_active=self._narration_active,
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("audio_in STT failed: %s", exc)
 
     # -----------------------------------------------------------------------
     # Cleanup

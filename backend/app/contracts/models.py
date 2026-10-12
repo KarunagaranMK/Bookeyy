@@ -5,10 +5,12 @@ Pydantic v2 models for every server→client and client→server frame,
 with a discriminated union on `type`.
 
 Naming is 1:1 with the TypeScript contract in:
-  ../lib/contracts/book-events.ts
-  ../lib/contracts/validate.ts
+  lib/contracts/book-events.ts
+  lib/contracts/validate.ts
 
-Protocol version: 1 (BOOK_PROTOCOL_VERSION)
+Protocol version history:
+  v1 — B0: initial protocol (mock-only, no auth)
+  v2 — B1: WS ticket auth (auth_ticket / auth_ok / auth_error connection frames)
 """
 from __future__ import annotations
 
@@ -17,7 +19,7 @@ from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
-BOOK_PROTOCOL_VERSION: Literal[1] = 1
+BOOK_PROTOCOL_VERSION: Literal[2] = 2
 
 # ---------------------------------------------------------------------------
 # Shared value types
@@ -180,6 +182,17 @@ class ErrorPayload(BaseModel):
     recoverable: bool
 
 
+# B1 connection-level payloads
+class AuthOkPayload(BaseModel):
+    userId: str
+    role: Literal["learner", "admin"]
+
+
+class AuthErrorPayload(BaseModel):
+    code: str
+    message: str
+
+
 # Connection-level frames (not in TS protocol union — transport-level only)
 class PongPayload(BaseModel):
     ts: int
@@ -194,7 +207,7 @@ def _now_ms() -> int:
 
 
 class _ServerBase(BaseModel):
-    v: Literal[1] = BOOK_PROTOCOL_VERSION
+    v: Literal[2] = BOOK_PROTOCOL_VERSION
     seq: int = Field(ge=0)
     sessionId: Optional[str] = None
     ts: int = Field(default_factory=_now_ms)
@@ -276,6 +289,19 @@ class ErrorEvent(_ServerBase):
     sessionId: Optional[str] = None  # always null for error frames
 
 
+# B1 connection-level server events
+class AuthOkEvent(_ServerBase):
+    type: Literal["auth_ok"] = "auth_ok"
+    payload: AuthOkPayload
+    sessionId: Optional[str] = None
+
+
+class AuthErrorEvent(_ServerBase):
+    type: Literal["auth_error"] = "auth_error"
+    payload: AuthErrorPayload
+    sessionId: Optional[str] = None
+
+
 # Connection-level (pong)
 class PongEvent(BaseModel):
     type: Literal["pong"] = "pong"
@@ -299,6 +325,8 @@ BookServerEvent = Annotated[
         SourcesEvent,
         PageCompleteEvent,
         ErrorEvent,
+        AuthOkEvent,
+        AuthErrorEvent,
     ],
     Field(discriminator="type"),
 ]
@@ -308,6 +336,8 @@ SERVER_EVENT_TYPES = frozenset([
     "diagram_draw", "highlight", "code_stream", "run_result",
     "question_received", "answer_chunk", "scope_refused", "sources",
     "page_complete", "error",
+    # B1 connection-level (included in TS SERVER_EVENT_TYPES for v2)
+    "auth_ok", "auth_error",
 ])
 
 # ---------------------------------------------------------------------------
@@ -375,12 +405,17 @@ class AudioInPayload(BaseModel):
     final: bool
 
 
+# B1 connection-level client auth frame
+class AuthTicketPayload(BaseModel):
+    ticket: str
+
+
 # ---------------------------------------------------------------------------
 # Client → Server envelopes (discriminated union)
 # ---------------------------------------------------------------------------
 
 class _ClientBase(BaseModel):
-    v: Literal[1] = BOOK_PROTOCOL_VERSION
+    v: Literal[2] = BOOK_PROTOCOL_VERSION
 
 
 class StartPageEvent(_ClientBase):
@@ -428,6 +463,13 @@ class AudioInEvent(_ClientBase):
     payload: AudioInPayload
 
 
+# B1 auth frame — sent as the FIRST frame after WebSocket open
+class AuthTicketEvent(BaseModel):
+    """Not in _ClientBase because it can also use v:1 for backwards compat."""
+    type: Literal["auth_ticket"] = "auth_ticket"
+    payload: AuthTicketPayload
+
+
 # Connection-level (ping — not in protocol union, handled before frame validation)
 class PingEvent(BaseModel):
     type: Literal["ping"] = "ping"
@@ -452,4 +494,6 @@ BookClientEvent = Annotated[
 CLIENT_EVENT_TYPES = frozenset([
     "start_page", "pause", "resume", "seek", "speed",
     "ask_question", "run_code", "submit_survey", "audio_in",
+    # B1 connection-level (NOT in TS ClientEventPayloads union — handled separately)
+    "auth_ticket",
 ])
